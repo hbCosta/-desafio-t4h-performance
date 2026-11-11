@@ -15,7 +15,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 |---|---|---|---|---|---|---|
 | 01 | Índice em `pedidos (cliente_id, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/00-pedidos-por-cliente.txt`](diagnostico/00-pedidos-por-cliente.txt). Documentação: [preencher com o link que você abriu] | Aplicada, sem ganho claro | Controle: 2.69 req/s, p95 26751.0 ms | 2.93 req/s, p95 21497.2 ms | A consulta ficou muito mais rápida, mas o banco continuou em ~100% de CPU; a diferença na carga está dentro da variação entre execuções |
 | 02 | Índice em `itens_pedido (pedido_id, id)` | Diagnóstico próprio: [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | Aplicada e medida | 01: 2.93 req/s, p95 21497.2 ms | 4.85 req/s, p95 12529.4 ms | Ganho claro, acima da variação: mais requisições por segundo e p95 menor; o banco continua em ~100% de CPU, agora atendendo mais requisições |
-| 03 | Índice em `pedidos (status, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) | Em andamento | 02: 4.85 req/s, p95 12529.4 ms | ainda não medido | — |
+| 03 | Índice em `pedidos (status, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) | Aplicada, sem ganho claro | 02: 4.85 req/s, p95 12529.4 ms | 5.27 req/s, p95 11714.9 ms | A página ficou muito mais rápida, mas o `count(*)` quase não mudou; a diferença geral está dentro da variação entre execuções |
 
 ## Medições de referência
 
@@ -146,3 +146,34 @@ Pastas do depois:
 - **O que refutaria a hipótese:** o p95 de `pedidos-por-status` e as req/s ficarem dentro da variação da 02.
 - **Limite já esperado:** o `OFFSET` continua obrigando o banco a percorrer as linhas das páginas anteriores (até 19.980 na página 1000), e o `count(*)` continua contando todas as linhas do status (até 300 mil para `pago`); o índice deixa as duas coisas mais baratas, mas não elimina esse trabalho.
 - **Antes:** mudança 02.
+- **Mudança:** [`banco/05-indice-pedidos-status.sql`](banco/05-indice-pedidos-status.sql), commit `945543e`.
+
+**Diagnóstico das consultas** (`EXPLAIN ANALYZE` com o banco sem carga, status `pago`):
+
+| Consulta | Antes ([`03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt)) | Depois ([`03-pedidos-por-status-depois.txt`](diagnostico/03-pedidos-por-status-depois.txt)) |
+|---|---|---|
+| `count(*)` | `Parallel Seq Scan`, 79.658 ms | `Parallel Index Only Scan`, 75.258 ms |
+| Página com `OFFSET 9980` | `Parallel Seq Scan` + ordenação, 322.556 ms | `Index Scan`, 8.664 ms |
+
+O mesmo arquivo mostra mais dois casos: `OFFSET 19980` de `pago` com `Index Scan` em 10.189 ms, e `OFFSET 19980` de `pendente`, em que o banco escolheu outro plano (`Parallel Bitmap Heap Scan` + ordenação) e levou 174.951 ms.
+
+**Carga:**
+
+| Métrica | Antes (02) | Depois (03) |
+|---|---|---|
+| Req/s | 4.85 | 5.27 |
+| p95 geral | 12529.4 ms | 11714.9 ms |
+| Mediana pedidos-por-status | 5498.3 ms | 2912.8 ms |
+| p95 pedidos-por-status | 9502.9 ms | 16451.8 ms |
+| CPU banco / API | 98.2% / 12.7% | 99.5% / 16.9% |
+| Memória banco / API | 392.2 MiB / 42.6 MiB | 417.2 MiB / 41.7 MiB |
+| Erros | 0.00%, 0.00% e 0.30% | 0.00% nas 3 |
+
+Pastas do depois:
+[`20261111-205156`](resultados/20261111-205156-03-indice-pedidos-status/resumo.txt) ·
+[`20261111-205330`](resultados/20261111-205330-03-indice-pedidos-status/resumo.txt) ·
+[`20261111-205505`](resultados/20261111-205505-03-indice-pedidos-status/resumo.txt)
+
+**Conclusão: aplicada, sem ganho claro.** A hipótese se confirmou só em parte. A página ficou muito mais barata (322.556 ms para 8.664 ms) e a mediana da rota caiu (5498.3 ms para 2912.8 ms), mas o p95 da rota subiu (9502.9 ms para 16451.8 ms) e o ganho geral (4.85 para 5.27 req/s) está dentro da variação: as 3 execuções da 03 ficaram entre 4.99 e 6.62 req/s, e as da 02 entre 4.47 e 5.07. A explicação que o diagnóstico sustenta: o `count(*)` praticamente não mudou (79.658 ms para 75.258 ms), porque, mesmo lendo só o índice, o banco ainda precisa contar cada um dos até 300 mil pedidos do status, em toda requisição. Com o banco ainda a ~100% de CPU, a rota continua esperando na fila atrás de `top-produtos` e `vendas-por-dia`. O p95 da rota tem poucas amostras (44 a 57 requisições por execução), então não trato a subida como piora confirmada.
+
+**Próximo passo sugerido pelo diagnóstico:** o total por status é sempre o mesmo para um mesmo banco (a API só lê, não grava), então ele não precisaria ser recontado a cada requisição.
