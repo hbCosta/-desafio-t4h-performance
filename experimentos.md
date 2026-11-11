@@ -14,6 +14,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | # | Ideia | Fonte | Status | Antes | Depois | Conclusão |
 |---|---|---|---|---|---|---|
 | 01 | Índice em `pedidos (cliente_id, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/00-pedidos-por-cliente.txt`](diagnostico/00-pedidos-por-cliente.txt). Documentação: [preencher com o link que você abriu] | Aplicada, sem ganho claro | Controle: 2.69 req/s, p95 26751.0 ms | 2.93 req/s, p95 21497.2 ms | A consulta ficou muito mais rápida, mas o banco continuou em ~100% de CPU; a diferença na carga está dentro da variação entre execuções |
+| 02 | Índice em `itens_pedido (pedido_id, id)` | Diagnóstico próprio: [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | Em andamento | 01: 2.93 req/s, p95 21497.2 ms | ainda não medido | — |
 
 ## Medições de referência
 
@@ -99,3 +100,10 @@ Pastas do depois:
 [`20261111-195538`](resultados/20261111-195538-01-indice-pedidos-cliente/resumo.txt) ·
 [`20261111-195739`](resultados/20261111-195739-01-indice-pedidos-cliente/resumo.txt) ·
 [`20261111-195927`](resultados/20261111-195927-01-indice-pedidos-cliente/resumo.txt)
+
+### 02 · Índice em `itens_pedido (pedido_id, id)`
+
+- **Hipótese** (registrada antes da mudança): criar um índice em `itens_pedido (pedido_id, id)` deve reduzir o p95 da rota `pedidos-do-cliente` e a CPU do banco, porque hoje cada pedido do cliente dispara uma leitura completa da tabela `itens_pedido`, com cerca de 1,5 milhão de linhas, para devolver poucos itens ([`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt): `Parallel Seq Scan on itens_pedido`, `Rows Removed by Filter: 499999` em cada um dos 3 processos, `Execution Time: 116.237 ms`).
+- **Por que acho que esta mudança deve ter mais efeito que a 01:** na rota `/clientes/:id/pedidos`, a consulta de `pedidos` roda uma vez por requisição, mas a de `itens_pedido` roda uma vez para cada pedido do cliente. A 01 tirou a varredura que acontecia uma vez; esta tira a que se repete.
+- **O que refutaria a hipótese:** o p95 de `pedidos-do-cliente` e a CPU do banco ficarem dentro da variação da 01. Nesse caso, o gargalo principal estaria em outra rota.
+- **Antes:** mudança 01 (mesmas condições: banco recriado do zero).
