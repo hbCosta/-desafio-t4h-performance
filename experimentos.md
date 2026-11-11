@@ -14,7 +14,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | # | Ideia | Fonte | Status | Antes | Depois | Conclusão |
 |---|---|---|---|---|---|---|
 | 01 | Índice em `pedidos (cliente_id, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/00-pedidos-por-cliente.txt`](diagnostico/00-pedidos-por-cliente.txt). Documentação: [preencher com o link que você abriu] | Aplicada, sem ganho claro | Controle: 2.69 req/s, p95 26751.0 ms | 2.93 req/s, p95 21497.2 ms | A consulta ficou muito mais rápida, mas o banco continuou em ~100% de CPU; a diferença na carga está dentro da variação entre execuções |
-| 02 | Índice em `itens_pedido (pedido_id, id)` | Diagnóstico próprio: [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | Em andamento | 01: 2.93 req/s, p95 21497.2 ms | ainda não medido | — |
+| 02 | Índice em `itens_pedido (pedido_id, id)` | Diagnóstico próprio: [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | Aplicada e medida | 01: 2.93 req/s, p95 21497.2 ms | 4.85 req/s, p95 12529.4 ms | Ganho claro, acima da variação: mais requisições por segundo e p95 menor; o banco continua em ~100% de CPU, agora atendendo mais requisições |
 
 ## Medições de referência
 
@@ -107,3 +107,33 @@ Pastas do depois:
 - **Por que acho que esta mudança deve ter mais efeito que a 01:** na rota `/clientes/:id/pedidos`, a consulta de `pedidos` roda uma vez por requisição, mas a de `itens_pedido` roda uma vez para cada pedido do cliente. A 01 tirou a varredura que acontecia uma vez; esta tira a que se repete.
 - **O que refutaria a hipótese:** o p95 de `pedidos-do-cliente` e a CPU do banco ficarem dentro da variação da 01. Nesse caso, o gargalo principal estaria em outra rota.
 - **Antes:** mudança 01 (mesmas condições: banco recriado do zero).
+
+**Diagnóstico da consulta** (`EXPLAIN ANALYZE` com o banco sem carga):
+
+| | Antes | Depois |
+|---|---|---|
+| Arquivo | [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | [`diagnostico/02-itens-por-pedido.txt`](diagnostico/02-itens-por-pedido.txt) |
+| Plano | `Parallel Seq Scan on itens_pedido` + `Sort` | `Index Scan using idx_itens_pedido_pedido_id` |
+| Execution Time | 116.237 ms | 0.049 ms |
+
+- **Mudança:** [`banco/04-indice-itens-pedido.sql`](banco/04-indice-itens-pedido.sql), commit `8507550`.
+
+**Carga:**
+
+| Métrica | Antes (01) | Depois (02) |
+|---|---|---|
+| Req/s | 2.93 | 4.85 |
+| p95 geral | 21497.2 ms | 12529.4 ms |
+| p95 pedidos-do-cliente | 25979.5 ms | 11336.1 ms |
+| CPU banco / API | 98.2% / 7.5% | 98.2% / 12.7% |
+| Memória banco / API | 391.1 MiB / 29.9 MiB | 392.2 MiB / 42.6 MiB |
+| Erros | 0.00% nas 3 | 0.00%, 0.00% e 0.30% |
+
+Pastas do depois:
+[`20261111-204310`](resultados/20261111-204310-02-indice-itens-pedido/resumo.txt) ·
+[`20261111-204442`](resultados/20261111-204442-02-indice-itens-pedido/resumo.txt) ·
+[`20261111-204617`](resultados/20261111-204617-02-indice-itens-pedido/resumo.txt)
+
+**Conclusão: aplicada e medida, com ganho.** A parte da hipótese sobre a rota se confirmou: o p95 de `pedidos-do-cliente` caiu de 25979.5 ms para 11336.1 ms, e a aplicação inteira passou de 2.93 para 4.85 req/s, uma diferença maior que a variação entre execuções (as 3 medições da 02 ficaram entre 4.47 e 5.07 req/s; as da 01, entre 2.91 e 2.95). A parte sobre a CPU do banco **não** se confirmou: ela continuou em ~98%. A leitura mais provável é que o banco segue saturado, mas agora gasta a CPU atendendo mais requisições; as rotas que ainda leem tabelas inteiras (`top-produtos`, `vendas-por-dia`, `pedidos-por-status`) continuam disputando a mesma CPU.
+
+**Erro na 3ª execução:** 1 requisição de `top-produtos` passou do limite de 60 s do teste de carga (`request timeout`), o que deu 0.30% de erros naquela execução. A rota já levava de 15 a 30 s na linha de base; é o próximo sintoma a investigar.
