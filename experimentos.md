@@ -15,6 +15,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 |---|---|---|---|---|---|---|
 | 01 | Índice em `pedidos (cliente_id, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/00-pedidos-por-cliente.txt`](diagnostico/00-pedidos-por-cliente.txt). Documentação: [preencher com o link que você abriu] | Aplicada, sem ganho claro | Controle: 2.69 req/s, p95 26751.0 ms | 2.93 req/s, p95 21497.2 ms | A consulta ficou muito mais rápida, mas o banco continuou em ~100% de CPU; a diferença na carga está dentro da variação entre execuções |
 | 02 | Índice em `itens_pedido (pedido_id, id)` | Diagnóstico próprio: [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | Aplicada e medida | 01: 2.93 req/s, p95 21497.2 ms | 4.85 req/s, p95 12529.4 ms | Ganho claro, acima da variação: mais requisições por segundo e p95 menor; o banco continua em ~100% de CPU, agora atendendo mais requisições |
+| 03 | Índice em `pedidos (status, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) | Em andamento | 02: 4.85 req/s, p95 12529.4 ms | ainda não medido | — |
 
 ## Medições de referência
 
@@ -137,3 +138,11 @@ Pastas do depois:
 **Conclusão: aplicada e medida, com ganho.** A parte da hipótese sobre a rota se confirmou: o p95 de `pedidos-do-cliente` caiu de 25979.5 ms para 11336.1 ms, e a aplicação inteira passou de 2.93 para 4.85 req/s, uma diferença maior que a variação entre execuções (as 3 medições da 02 ficaram entre 4.47 e 5.07 req/s; as da 01, entre 2.91 e 2.95). A parte sobre a CPU do banco **não** se confirmou: ela continuou em ~98%. A leitura mais provável é que o banco segue saturado, mas agora gasta a CPU atendendo mais requisições; as rotas que ainda leem tabelas inteiras (`top-produtos`, `vendas-por-dia`, `pedidos-por-status`) continuam disputando a mesma CPU.
 
 **Erro na 3ª execução:** 1 requisição de `top-produtos` passou do limite de 60 s do teste de carga (`request timeout`), o que deu 0.30% de erros naquela execução. A rota já levava de 15 a 30 s na linha de base; é o próximo sintoma a investigar.
+
+### 03 · Índice em `pedidos (status, criado_em DESC, id DESC)`
+
+- **Diagnóstico que motivou:** depois da 02, rodei o `EXPLAIN ANALYZE` de cada consulta das rotas com o banco sem carga ([`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt)). A rota `pedidos-por-status` (15% da carga) faz duas consultas que leem a tabela `pedidos` inteira: o `count(*)` (`Parallel Seq Scan on pedidos`, `Execution Time: 79.658 ms`) e a página com `ORDER BY criado_em DESC, id DESC LIMIT 20 OFFSET 9980` (`Parallel Seq Scan on pedidos` seguido de ordenação, `Execution Time: 322.556 ms`). Considerando o peso de cada rota na carga, é a que mais consome o banco; `top-produtos` é a consulta mais lenta (`1230.605 ms`), mas tem só 2% da carga.
+- **Hipótese** (registrada antes da mudança): criar um índice em `pedidos (status, criado_em DESC, id DESC)` deve reduzir o p95 da rota `pedidos-por-status` e aumentar as requisições por segundo, porque a página passa a ser lida já ordenada pelo índice, sem ler e ordenar todos os pedidos do status, e o `count(*)` pode contar pelo índice em vez de ler a tabela.
+- **O que refutaria a hipótese:** o p95 de `pedidos-por-status` e as req/s ficarem dentro da variação da 02.
+- **Limite já esperado:** o `OFFSET` continua obrigando o banco a percorrer as linhas das páginas anteriores (até 19.980 na página 1000), e o `count(*)` continua contando todas as linhas do status (até 300 mil para `pago`); o índice deixa as duas coisas mais baratas, mas não elimina esse trabalho.
+- **Antes:** mudança 02.
