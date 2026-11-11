@@ -1,0 +1,8 @@
+                                                                QUERY PLAN                                                                 
+-------------------------------------------------------------------------------------------------------------------------------------------
+ Index Scan using idx_itens_pedido_pedido_id on itens_pedido  (cost=0.43..13.75 rows=4 width=20) (actual time=0.021..0.021 rows=2 loops=1)
+   Index Cond: (pedido_id = 1)
+ Planning Time: 0.210 ms
+ Execution Time: 0.049 ms
+(4 rows)
+
