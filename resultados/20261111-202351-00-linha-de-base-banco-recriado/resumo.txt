@@ -1,0 +1,17 @@
+Medição: 00-linha-de-base-banco-recriado
+Carga: 20 usuários virtuais por 60s
+
+Requisições:        184
+Requisições/s:      2.69
+Tempo de resposta:  mediana 1297.1 ms | p95 26751.0 ms | p99 31321.1 ms
+Erros:              0.00%
+
+Por rota:
+rota                  req       mediana       p95           p99           erros   
+cliente               49        490.0 ms      973.7 ms      1196.1 ms     0.0%    
+cliente-por-email     34        1292.7 ms     2251.1 ms     2769.8 ms     0.0%    
+pedidos-do-cliente    37        21252.5 ms    30170.6 ms    31530.9 ms    0.0%    
+pedidos-por-status    21        10001.7 ms    12791.3 ms    13506.3 ms    0.0%    
+busca-produtos        29        797.2 ms      1764.1 ms     2126.2 ms     0.0%    
+vendas-por-dia        12        6651.8 ms     11115.2 ms    11203.5 ms    0.0%    
+top-produtos          2         31992.7 ms    47823.6 ms    49230.8 ms    0.0%    
