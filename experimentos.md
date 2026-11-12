@@ -18,7 +18,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | 03 | Índice em `pedidos (status, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) | Aplicada, sem ganho claro | 02: 4.85 req/s, p95 12529.4 ms | 5.27 req/s, p95 11714.9 ms | A página ficou muito mais rápida, mas o `count(*)` quase não mudou; a diferença geral está dentro da variação entre execuções |
 | 04 | Ranking de `top-produtos` pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 03: 5.27 req/s, p95 11714.9 ms | 7.85 req/s, p95 9635.0 ms | Maior ganho até aqui: a rota caiu de dezenas de segundos para menos de 1 s e liberou o banco para as outras rotas |
 | 05 | Pool de conexões na API (`pg.Pool`) | Diagnóstico próprio: [`diagnostico/05-custo-de-conexao.txt`](diagnostico/05-custo-de-conexao.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 04: 7.85 req/s, p95 9635.0 ms | 21.50 req/s, p95 3282.7 ms | Maior ganho até aqui: abrir uma conexão por consulta era o principal desperdício |
-| 06 | Tirar o N+1 de `pedidos-do-cliente`: itens e nomes de produto numa consulta só | Diagnóstico próprio: [`diagnostico/06-consultas-por-requisicao.txt`](diagnostico/06-consultas-por-requisicao.txt). Fonte: [preencher com o link que você abriu] | Em andamento | 05: 21.50 req/s, p95 3282.7 ms | ainda não medido | — |
+| 06 | Tirar o N+1 de `pedidos-do-cliente`: itens e nomes de produto numa consulta só | Diagnóstico próprio: [`diagnostico/06-consultas-por-requisicao.txt`](diagnostico/06-consultas-por-requisicao.txt). Fonte: [preencher com o link que você abriu] | Aplicada, ganho parcial | 05: 21.50 req/s, p95 3282.7 ms | 20.88 req/s, p95 2216.3 ms | A rota ficou bem mais rápida e o p95 geral caiu, mas as req/s não mudaram: o banco continua sendo o limite |
 
 ## Medições de referência
 
@@ -256,3 +256,30 @@ Pastas do depois:
 - **Hipótese** (registrada antes da mudança): trocar as ~22 consultas por requisição por 3 deve reduzir o p95 de `pedidos-do-cliente` e aumentar as req/s, porque cada consulta tem um custo fixo de ida e volta ao banco e de planejamento, que hoje se repete dezenas de vezes por requisição.
 - **O que refutaria a hipótese:** as req/s e o p95 de `pedidos-do-cliente` ficarem dentro da variação da 05. Nesse caso, depois do pool, o custo por consulta já seria pequeno demais para importar.
 - **Antes:** mudança 05.
+- **Commit da mudança:** `7520686` ([`api/src/rotas.js`](api/src/rotas.js)). Antes de medir, o contrato foi conferido: `Contrato mantido`.
+
+**Carga:**
+
+| Métrica | Antes (05) | Depois (06) |
+|---|---|---|
+| Req/s | 21.50 | 20.88 |
+| p95 geral | 3282.7 ms | 2216.3 ms |
+| Mediana geral | 585.5 ms | 791.3 ms |
+| p95 pedidos-do-cliente | 4492.0 ms | 1730.6 ms |
+| Mediana cliente | 115.9 ms | 320.0 ms |
+| p95 pedidos-por-status | 1903.5 ms | 2720.0 ms |
+| p95 vendas-por-dia | 2336.5 ms | 3969.3 ms |
+| CPU banco / API | 96.6% / 29.6% | 98.0% / 27.2% |
+| Memória banco / API | 474.2 MiB / 35.5 MiB | 470.5 MiB / 45.6 MiB |
+| Erros | 0.00% nas 3 | 0.00% nas 3 |
+
+Pastas do depois:
+[`20261111-211914`](resultados/20261111-211914-06-sem-n-mais-1/resumo.txt) ·
+[`20261111-212038`](resultados/20261111-212038-06-sem-n-mais-1/resumo.txt) ·
+[`20261111-212206`](resultados/20261111-212206-06-sem-n-mais-1/resumo.txt)
+
+**Conclusão: aplicada, ganho parcial.** A parte da hipótese sobre a rota se confirmou: o p95 de `pedidos-do-cliente` caiu de 4492.0 ms para 1730.6 ms, e com isso o p95 geral caiu de 3282.7 ms para 2216.3 ms. A parte sobre as req/s **não** se confirmou: 20.88 está dentro da faixa da 05 (20.11 a 21.74). As outras rotas ficaram mais lentas (por exemplo, a mediana de `cliente` subiu de 115.9 ms para 320.0 ms).
+
+Minha leitura, que ainda não verifiquei com diagnóstico próprio: com o pool, o custo das ~22 consultas era sobretudo espera (ida e volta até o banco), e não trabalho de CPU do banco. Tirar o N+1 reduziu a espera daquela rota, mas o banco continuou fazendo praticamente o mesmo trabalho total e seguiu a ~98% de CPU. Como os 20 usuários virtuais pedem sem pausa, o tempo que `pedidos-do-cliente` deixou de esperar virou mais requisições das outras rotas disputando a mesma CPU, e elas passaram a esperar mais. O total de requisições por segundo continua limitado pela CPU do banco.
+
+**Ponto de atenção:** a memória do banco teve pico de 500.1 MiB numa das execuções ([`recursos.txt`](resultados/20261111-212038-06-sem-n-mais-1/recursos.txt)), perto do limite de 512 MB.
