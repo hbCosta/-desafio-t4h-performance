@@ -19,7 +19,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | 04 | Ranking de `top-produtos` pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 03: 5.27 req/s, p95 11714.9 ms | 7.85 req/s, p95 9635.0 ms | Maior ganho até aqui: a rota caiu de dezenas de segundos para menos de 1 s e liberou o banco para as outras rotas |
 | 05 | Pool de conexões na API (`pg.Pool`) | Diagnóstico próprio: [`diagnostico/05-custo-de-conexao.txt`](diagnostico/05-custo-de-conexao.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 04: 7.85 req/s, p95 9635.0 ms | 21.50 req/s, p95 3282.7 ms | Maior ganho até aqui: abrir uma conexão por consulta era o principal desperdício |
 | 06 | Tirar o N+1 de `pedidos-do-cliente`: itens e nomes de produto numa consulta só | Diagnóstico próprio: [`diagnostico/06-consultas-por-requisicao.txt`](diagnostico/06-consultas-por-requisicao.txt). Fonte: [preencher com o link que você abriu] | Aplicada, ganho parcial | 05: 21.50 req/s, p95 3282.7 ms | 20.88 req/s, p95 2216.3 ms | A rota ficou bem mais rápida e o p95 geral caiu, mas as req/s não mudaram: o banco continua sendo o limite |
-| 07 | Total de pedidos por status pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-pedidos-por-status-depois.txt`](diagnostico/03-pedidos-por-status-depois.txt). Documentação: [preencher com o link que você abriu] | Em andamento | 06: 20.88 req/s, p95 2216.3 ms | ainda não medido | — |
+| 07 | Total de pedidos por status pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-pedidos-por-status-depois.txt`](diagnostico/03-pedidos-por-status-depois.txt). Documentação: [preencher com o link que você abriu] | Aplicada, sem ganho | 06: 20.88 req/s, p95 2216.3 ms | 20.70 req/s, p95 2404.6 ms | Hipótese refutada: a contagem saiu do banco, mas as req/s ficaram dentro da variação da 06 |
 
 ## Medições de referência
 
@@ -293,3 +293,27 @@ Minha leitura, que ainda não verifiquei com diagnóstico próprio: com o pool, 
 - **O que refutaria a hipótese:** as req/s ficarem dentro da variação da 06 (20.85 a 22.06).
 - **Custo e limite:** os mesmos da 04. A visão fica parada no tempo e precisaria de `REFRESH MATERIALIZED VIEW` se a loja recebesse pedidos novos; nesta aplicação a API só lê.
 - **Antes:** mudança 06.
+- **Commit da mudança:** `51fb185` ([`banco/07-contagem-por-status.sql`](banco/07-contagem-por-status.sql) e a rota em [`api/src/rotas.js`](api/src/rotas.js)). Antes de medir, o contrato foi conferido: `Contrato mantido`.
+
+**Diagnóstico da consulta** (`EXPLAIN ANALYZE` com o banco sem carga, status `pago`, [`diagnostico/07-contagem-por-status-depois.txt`](diagnostico/07-contagem-por-status-depois.txt)): ler o total pronto levou 0.222 ms. No mesmo arquivo, o `count(*)` antigo, rodado de novo para comparar, levou 30.784 ms; na 03 a mesma consulta tinha levado 75.258 ms. O tempo de uma consulta isolada também varia bastante entre execuções.
+
+**Carga:**
+
+| Métrica | Antes (06) | Depois (07) |
+|---|---|---|
+| Req/s | 20.88 | 20.70 |
+| p95 geral | 2216.3 ms | 2404.6 ms |
+| Mediana pedidos-por-status | 1119.5 ms | 901.6 ms |
+| p95 pedidos-por-status | 2720.0 ms | 2988.9 ms |
+| CPU banco / API | 98.0% / 27.2% | 96.1% / 30.4% |
+| Memória banco / API | 470.5 MiB / 45.6 MiB | 468.8 MiB / 39.7 MiB |
+| Erros | 0.00% nas 3 | 0.00% nas 3 |
+
+Pastas do depois:
+[`20261111-213017`](resultados/20261111-213017-07-contagem-por-status/resumo.txt) ·
+[`20261111-213141`](resultados/20261111-213141-07-contagem-por-status/resumo.txt) ·
+[`20261111-213305`](resultados/20261111-213305-07-contagem-por-status/resumo.txt)
+
+**Conclusão: aplicada, sem ganho. Hipótese refutada.** As req/s (20.33 a 21.10) ficaram dentro da faixa da 06 (20.85 a 22.06), e o p95 geral não caiu. A mediana de `pedidos-por-status` caiu um pouco, mas o p95 da rota não.
+
+**O que isso ensina sobre o meu método:** escolhi a 07 multiplicando o tempo de cada consulta, medido com o banco parado, pelo peso da rota na carga. Esse método acertou na 04, mas errou aqui. Duas fraquezas aparecem nos próprios dados: o tempo de uma consulta isolada varia muito (75.258 ms na 03 e 30.784 ms agora, para a mesma consulta), e uma consulta rodada sozinha não mostra quanto ela custa quando disputa a CPU com as outras. Antes de outra mudança no banco, o próximo passo deveria ser medir **sob carga** quanto tempo de banco cada consulta ocupa (por exemplo, com a extensão `pg_stat_statements` do PostgreSQL), em vez de estimar.

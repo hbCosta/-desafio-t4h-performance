@@ -1,0 +1,29 @@
+# Diagnóstico depois da mudança 07 (commit 51fb185): total por status, banco sem carga.
+# Gerado em 2026-11-11 21:34:36 -0300
+
+## SELECT total FROM pedidos_por_status WHERE status = 'pago'
+                                                 QUERY PLAN                                                 
+------------------------------------------------------------------------------------------------------------
+ Seq Scan on pedidos_por_status  (cost=0.00..1.05 rows=1 width=8) (actual time=0.026..0.027 rows=1 loops=1)
+   Filter: (status = 'pago'::text)
+   Rows Removed by Filter: 3
+ Planning Time: 2.383 ms
+ Execution Time: 0.222 ms
+(5 rows)
+
+
+## SELECT count(*) AS total FROM pedidos WHERE status = 'pago'
+                                                                                     QUERY PLAN                                                                                     
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ Finalize Aggregate  (cost=11280.27..11280.28 rows=1 width=8) (actual time=28.635..30.713 rows=1 loops=1)
+   ->  Gather  (cost=11280.05..11280.26 rows=2 width=8) (actual time=28.567..30.706 rows=3 loops=1)
+         Workers Planned: 2
+         Workers Launched: 2
+         ->  Partial Aggregate  (cost=10280.05..10280.06 rows=1 width=8) (actual time=26.472..26.473 rows=1 loops=3)
+               ->  Parallel Index Only Scan using idx_pedidos_status_criado_em on pedidos  (cost=0.42..9967.95 rows=124840 width=0) (actual time=0.057..23.409 rows=100000 loops=3)
+                     Index Cond: (status = 'pago'::text)
+                     Heap Fetches: 0
+ Planning Time: 2.787 ms
+ Execution Time: 30.784 ms
+(10 rows)
+
