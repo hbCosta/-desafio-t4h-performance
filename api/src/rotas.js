@@ -124,7 +124,9 @@ rotas.get('/pedidos', assincrono(async (req, res) => {
   const pagina = req.query.pagina === undefined ? 1 : inteiroPositivo(req.query.pagina);
   if (pagina === null) return res.status(400).json({ erro: 'pagina invalida' });
 
-  const [contagem] = await consultar('SELECT count(*) AS total FROM pedidos WHERE status = $1', [status]);
+  // Total pré-calculado na visão materializada pedidos_por_status (banco/07-contagem-por-status.sql).
+  // Um status sem pedidos não aparece na visão; nesse caso o total é 0, como no count(*).
+  const [contagem = { total: 0 }] = await consultar('SELECT total FROM pedidos_por_status WHERE status = $1', [status]);
   const linhas = await consultar(
     'SELECT * FROM pedidos WHERE status = $1 ORDER BY criado_em DESC, id DESC LIMIT $2 OFFSET $3',
     [status, TAMANHO_PAGINA, (pagina - 1) * TAMANHO_PAGINA],
