@@ -18,6 +18,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | 03 | Índice em `pedidos (status, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) | Aplicada, sem ganho claro | 02: 4.85 req/s, p95 12529.4 ms | 5.27 req/s, p95 11714.9 ms | A página ficou muito mais rápida, mas o `count(*)` quase não mudou; a diferença geral está dentro da variação entre execuções |
 | 04 | Ranking de `top-produtos` pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 03: 5.27 req/s, p95 11714.9 ms | 7.85 req/s, p95 9635.0 ms | Maior ganho até aqui: a rota caiu de dezenas de segundos para menos de 1 s e liberou o banco para as outras rotas |
 | 05 | Pool de conexões na API (`pg.Pool`) | Diagnóstico próprio: [`diagnostico/05-custo-de-conexao.txt`](diagnostico/05-custo-de-conexao.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 04: 7.85 req/s, p95 9635.0 ms | 21.50 req/s, p95 3282.7 ms | Maior ganho até aqui: abrir uma conexão por consulta era o principal desperdício |
+| 06 | Tirar o N+1 de `pedidos-do-cliente`: itens e nomes de produto numa consulta só | Diagnóstico próprio: [`diagnostico/06-consultas-por-requisicao.txt`](diagnostico/06-consultas-por-requisicao.txt). Fonte: [preencher com o link que você abriu] | Em andamento | 05: 21.50 req/s, p95 3282.7 ms | ainda não medido | — |
 
 ## Medições de referência
 
@@ -247,3 +248,11 @@ Pastas do depois:
 **Conclusão: aplicada e medida, com ganho.** A hipótese se confirmou: a aplicação passou de 7.85 para 21.50 req/s (as 3 execuções ficaram entre 20.11 e 21.74, muito acima da faixa da 04, de 7.53 a 8.44), e o p95 de `pedidos-do-cliente` caiu de 12392.4 ms para 4492.0 ms. Abrir uma conexão por consulta era o maior desperdício da aplicação. O banco continua perto do limite de CPU (96.6%) e a API passou a usar mais CPU (29.6% de 1 CPU, com limite de 0,5 CPU), porque agora atende muito mais requisições.
 
 **Ponto de atenção:** a memória do banco subiu para 474.2 MiB de média, com pico de 493.0 MiB numa das execuções ([`recursos.txt`](resultados/20261111-211050-05-pool-de-conexoes/recursos.txt)), perto do limite de 512 MB. Uma causa provável, que não verifiquei, são os processos das 10 conexões que agora ficam abertas o tempo todo.
+
+### 06 · Tirar o N+1 de `pedidos-do-cliente`
+
+- **Diagnóstico que motivou:** depois da 05, `pedidos-do-cliente` continua a rota mais lenta (p95 de 4492.0 ms, 20% da carga). O código faz 1 consulta do cliente, 1 dos pedidos, 1 de itens para cada pedido e 1 de produto para cada item. Contando no banco ([`diagnostico/06-consultas-por-requisicao.txt`](diagnostico/06-consultas-por-requisicao.txt)), todo cliente tem 5 pedidos e, em média, 15 itens, o que dá em média 22 consultas por requisição (no máximo 32).
+- **Mudança:** buscar os itens de todos os pedidos do cliente numa consulta só, com `JOIN` em `produtos` para trazer o nome, e agrupar por pedido em JavaScript, mantendo a ordem por id do item. A rota passa a fazer sempre 3 consultas.
+- **Hipótese** (registrada antes da mudança): trocar as ~22 consultas por requisição por 3 deve reduzir o p95 de `pedidos-do-cliente` e aumentar as req/s, porque cada consulta tem um custo fixo de ida e volta ao banco e de planejamento, que hoje se repete dezenas de vezes por requisição.
+- **O que refutaria a hipótese:** as req/s e o p95 de `pedidos-do-cliente` ficarem dentro da variação da 05. Nesse caso, depois do pool, o custo por consulta já seria pequeno demais para importar.
+- **Antes:** mudança 05.

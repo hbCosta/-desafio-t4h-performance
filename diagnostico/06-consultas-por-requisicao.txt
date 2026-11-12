@@ -1,0 +1,9 @@
+# Diagnóstico antes da mudança 06 (commit af64dfa): quantas consultas a rota /clientes/:id/pedidos faz por requisição.
+# Gerado em 2026-11-11 21:17:29 -0300
+# Pelo código (api/src/rotas.js), a rota faz: 1 consulta do cliente + 1 dos pedidos + 1 de itens por pedido + 1 de produto por item.
+
+ media_pedidos_por_cliente | max_pedidos | media_itens_por_cliente | max_itens | media_consultas_por_requisicao | max_consultas_por_requisicao 
+---------------------------+-------------+-------------------------+-----------+--------------------------------+------------------------------
+                      5.00 |           5 |                   15.00 |        25 |                          22.00 |                           32
+(1 row)
+
