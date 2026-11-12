@@ -19,6 +19,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | 04 | Ranking de `top-produtos` pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 03: 5.27 req/s, p95 11714.9 ms | 7.85 req/s, p95 9635.0 ms | Maior ganho até aqui: a rota caiu de dezenas de segundos para menos de 1 s e liberou o banco para as outras rotas |
 | 05 | Pool de conexões na API (`pg.Pool`) | Diagnóstico próprio: [`diagnostico/05-custo-de-conexao.txt`](diagnostico/05-custo-de-conexao.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 04: 7.85 req/s, p95 9635.0 ms | 21.50 req/s, p95 3282.7 ms | Maior ganho até aqui: abrir uma conexão por consulta era o principal desperdício |
 | 06 | Tirar o N+1 de `pedidos-do-cliente`: itens e nomes de produto numa consulta só | Diagnóstico próprio: [`diagnostico/06-consultas-por-requisicao.txt`](diagnostico/06-consultas-por-requisicao.txt). Fonte: [preencher com o link que você abriu] | Aplicada, ganho parcial | 05: 21.50 req/s, p95 3282.7 ms | 20.88 req/s, p95 2216.3 ms | A rota ficou bem mais rápida e o p95 geral caiu, mas as req/s não mudaram: o banco continua sendo o limite |
+| 07 | Total de pedidos por status pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-pedidos-por-status-depois.txt`](diagnostico/03-pedidos-por-status-depois.txt). Documentação: [preencher com o link que você abriu] | Em andamento | 06: 20.88 req/s, p95 2216.3 ms | ainda não medido | — |
 
 ## Medições de referência
 
@@ -283,3 +284,12 @@ Pastas do depois:
 Minha leitura, que ainda não verifiquei com diagnóstico próprio: com o pool, o custo das ~22 consultas era sobretudo espera (ida e volta até o banco), e não trabalho de CPU do banco. Tirar o N+1 reduziu a espera daquela rota, mas o banco continuou fazendo praticamente o mesmo trabalho total e seguiu a ~98% de CPU. Como os 20 usuários virtuais pedem sem pausa, o tempo que `pedidos-do-cliente` deixou de esperar virou mais requisições das outras rotas disputando a mesma CPU, e elas passaram a esperar mais. O total de requisições por segundo continua limitado pela CPU do banco.
 
 **Ponto de atenção:** a memória do banco teve pico de 500.1 MiB numa das execuções ([`recursos.txt`](resultados/20261111-212038-06-sem-n-mais-1/recursos.txt)), perto do limite de 512 MB.
+
+### 07 · Total de pedidos por status pré-calculado
+
+- **Diagnóstico que motivou:** na 03, o índice deixou a página de `pedidos-por-status` barata, mas o `count(*)` quase não mudou: 75.258 ms com o banco sem carga ([`diagnostico/03-pedidos-por-status-depois.txt`](diagnostico/03-pedidos-por-status-depois.txt)), porque o banco conta, a cada chamada, todos os pedidos do status (até 300 mil para `pago`). A rota tem 15% da carga. Pelos tempos de [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) ponderados pelo peso de cada rota, é a maior conta de CPU que sobrou no banco. A 06 mostrou que só ganha req/s a mudança que reduz o trabalho do banco.
+- **Mudança:** contar os pedidos de cada status uma vez, quando o banco é criado, numa visão materializada (`banco/07-contagem-por-status.sql`), e fazer a rota ler o total pronto. Como na 04, a mudança tem um `.sql` novo e a alteração na rota, que não funcionam separados.
+- **Hipótese** (registrada antes da mudança): pré-calcular o total por status deve aumentar as req/s da aplicação e reduzir o p95 de `pedidos-por-status`, porque tira do banco a contagem de até 300 mil linhas em 15% das requisições.
+- **O que refutaria a hipótese:** as req/s ficarem dentro da variação da 06 (20.85 a 22.06).
+- **Custo e limite:** os mesmos da 04. A visão fica parada no tempo e precisaria de `REFRESH MATERIALIZED VIEW` se a loja recebesse pedidos novos; nesta aplicação a API só lê.
+- **Antes:** mudança 06.
