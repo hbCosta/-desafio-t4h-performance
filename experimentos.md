@@ -16,7 +16,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | 01 | Índice em `pedidos (cliente_id, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/00-pedidos-por-cliente.txt`](diagnostico/00-pedidos-por-cliente.txt). Documentação: [preencher com o link que você abriu] | Aplicada, sem ganho claro | Controle: 2.69 req/s, p95 26751.0 ms | 2.93 req/s, p95 21497.2 ms | A consulta ficou muito mais rápida, mas o banco continuou em ~100% de CPU; a diferença na carga está dentro da variação entre execuções |
 | 02 | Índice em `itens_pedido (pedido_id, id)` | Diagnóstico próprio: [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | Aplicada e medida | 01: 2.93 req/s, p95 21497.2 ms | 4.85 req/s, p95 12529.4 ms | Ganho claro, acima da variação: mais requisições por segundo e p95 menor; o banco continua em ~100% de CPU, agora atendendo mais requisições |
 | 03 | Índice em `pedidos (status, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) | Aplicada, sem ganho claro | 02: 4.85 req/s, p95 12529.4 ms | 5.27 req/s, p95 11714.9 ms | A página ficou muito mais rápida, mas o `count(*)` quase não mudou; a diferença geral está dentro da variação entre execuções |
-| 04 | Ranking de `top-produtos` pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt). Documentação: [preencher com o link que você abriu] | Em andamento | 03: 5.27 req/s, p95 11714.9 ms | ainda não medido | — |
+| 04 | Ranking de `top-produtos` pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 03: 5.27 req/s, p95 11714.9 ms | 7.85 req/s, p95 9635.0 ms | Maior ganho até aqui: a rota caiu de dezenas de segundos para menos de 1 s e liberou o banco para as outras rotas |
 
 ## Medições de referência
 
@@ -188,3 +188,31 @@ Pastas do depois:
 - **O que refutaria a hipótese:** as req/s ficarem dentro da variação da 03. Nesse caso, o custo de `top-produtos` era pequeno perto do resto, por causa do peso de só 2%.
 - **Custo e limite:** a visão ocupa espaço no banco (uma linha por produto vendido) e fica parada no tempo: se a loja recebesse pedidos novos, o ranking precisaria ser recalculado (`REFRESH MATERIALIZED VIEW`). Nesta aplicação a API só lê, então os valores são sempre os mesmos.
 - **Antes:** mudança 03.
+- **Commit da mudança:** `d876bf6` ([`banco/06-top-produtos.sql`](banco/06-top-produtos.sql) e a rota em [`api/src/rotas.js`](api/src/rotas.js)). Antes de medir, o contrato foi conferido: `Contrato mantido`.
+
+**Diagnóstico da consulta** (`EXPLAIN ANALYZE` com o banco sem carga, `LIMIT 10`):
+
+| | Antes ([`03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt)) | Depois ([`04-top-produtos-depois.txt`](diagnostico/04-top-produtos-depois.txt)) |
+|---|---|---|
+| Plano | `Parallel Seq Scan` em `itens_pedido`, `pedidos` e `produtos`, agregação e ordenação | `Index Scan using idx_top_produtos_receita on top_produtos` |
+| Execution Time | 1230.605 ms | 16.328 ms |
+
+**Carga:**
+
+| Métrica | Antes (03) | Depois (04) |
+|---|---|---|
+| Req/s | 5.27 | 7.85 |
+| p95 geral | 11714.9 ms | 9635.0 ms |
+| p95 top-produtos | 29313.8 ms | 532.1 ms |
+| p95 pedidos-por-status | 16451.8 ms | 4621.1 ms |
+| p95 vendas-por-dia | 14771.7 ms | 5217.6 ms |
+| CPU banco / API | 99.5% / 16.9% | 98.8% / 20.5% |
+| Memória banco / API | 417.2 MiB / 41.7 MiB | 456.3 MiB / 36.6 MiB |
+| Erros | 0.00% nas 3 | 0.00% nas 3 |
+
+Pastas do depois:
+[`20261111-210204`](resultados/20261111-210204-04-top-produtos-materializado/resumo.txt) ·
+[`20261111-210331`](resultados/20261111-210331-04-top-produtos-materializado/resumo.txt) ·
+[`20261111-210457`](resultados/20261111-210457-04-top-produtos-materializado/resumo.txt)
+
+**Conclusão: aplicada e medida, com ganho.** A hipótese se confirmou. O p95 de `top-produtos` caiu de 29313.8 ms para 532.1 ms e a aplicação passou de 5.27 para 7.85 req/s; as 3 execuções da 04 ficaram entre 7.53 e 8.44 req/s, todas acima da maior da 03 (6.62). O efeito apareceu também em rotas que não foram alteradas, como `pedidos-por-status` e `vendas-por-dia`: elas disputavam a CPU do banco com as somas de `top-produtos`, que ocupavam 3 processos por mais de 1 s a cada chamada. O banco continua a ~99% de CPU, agora atendendo mais requisições. A memória média do banco subiu de 417.2 MiB para 456.3 MiB, ainda abaixo do limite de 512 MB; não verifiquei se a causa é a visão materializada.
