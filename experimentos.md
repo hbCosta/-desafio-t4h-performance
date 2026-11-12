@@ -17,7 +17,7 @@ Registro de cada mudança testada, com o antes, o depois e a conclusão.
 | 02 | Índice em `itens_pedido (pedido_id, id)` | Diagnóstico próprio: [`diagnostico/00-itens-por-pedido.txt`](diagnostico/00-itens-por-pedido.txt) | Aplicada e medida | 01: 2.93 req/s, p95 21497.2 ms | 4.85 req/s, p95 12529.4 ms | Ganho claro, acima da variação: mais requisições por segundo e p95 menor; o banco continua em ~100% de CPU, agora atendendo mais requisições |
 | 03 | Índice em `pedidos (status, criado_em DESC, id DESC)` | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt) | Aplicada, sem ganho claro | 02: 4.85 req/s, p95 12529.4 ms | 5.27 req/s, p95 11714.9 ms | A página ficou muito mais rápida, mas o `count(*)` quase não mudou; a diferença geral está dentro da variação entre execuções |
 | 04 | Ranking de `top-produtos` pré-calculado numa visão materializada | Diagnóstico próprio: [`diagnostico/03-consultas-por-rota.txt`](diagnostico/03-consultas-por-rota.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 03: 5.27 req/s, p95 11714.9 ms | 7.85 req/s, p95 9635.0 ms | Maior ganho até aqui: a rota caiu de dezenas de segundos para menos de 1 s e liberou o banco para as outras rotas |
-| 05 | Pool de conexões na API (`pg.Pool`) | Diagnóstico próprio: [`diagnostico/05-custo-de-conexao.txt`](diagnostico/05-custo-de-conexao.txt). Documentação: [preencher com o link que você abriu] | Em andamento | 04: 7.85 req/s, p95 9635.0 ms | ainda não medido | — |
+| 05 | Pool de conexões na API (`pg.Pool`) | Diagnóstico próprio: [`diagnostico/05-custo-de-conexao.txt`](diagnostico/05-custo-de-conexao.txt). Documentação: [preencher com o link que você abriu] | Aplicada e medida | 04: 7.85 req/s, p95 9635.0 ms | 21.50 req/s, p95 3282.7 ms | Maior ganho até aqui: abrir uma conexão por consulta era o principal desperdício |
 
 ## Medições de referência
 
@@ -226,3 +226,24 @@ Pastas do depois:
 - **O que refutaria a hipótese:** as req/s e o p95 de `pedidos-do-cliente` ficarem dentro da variação da 04. Nesse caso, o custo de conexão seria pequeno perto do tempo das consultas sob carga.
 - **Risco:** com no máximo 10 conexões, quando todas estiverem ocupadas as consultas esperam na fila do pool, dentro da API. Como o banco tem 1 CPU, mais conexões simultâneas não deveriam fazê-lo trabalhar mais rápido.
 - **Antes:** mudança 04.
+- **Commit da mudança:** `38acfeb` ([`api/src/db.js`](api/src/db.js)). Antes de medir, o contrato foi conferido: `Contrato mantido`.
+
+**Carga:**
+
+| Métrica | Antes (04) | Depois (05) |
+|---|---|---|
+| Req/s | 7.85 | 21.50 |
+| p95 geral | 9635.0 ms | 3282.7 ms |
+| p95 pedidos-do-cliente | 12392.4 ms | 4492.0 ms |
+| CPU banco / API | 98.8% / 20.5% | 96.6% / 29.6% |
+| Memória banco / API | 456.3 MiB / 36.6 MiB | 474.2 MiB / 35.5 MiB |
+| Erros | 0.00% nas 3 | 0.00% nas 3 |
+
+Pastas do depois:
+[`20261111-211050`](resultados/20261111-211050-05-pool-de-conexoes/resumo.txt) ·
+[`20261111-211212`](resultados/20261111-211212-05-pool-de-conexoes/resumo.txt) ·
+[`20261111-211335`](resultados/20261111-211335-05-pool-de-conexoes/resumo.txt)
+
+**Conclusão: aplicada e medida, com ganho.** A hipótese se confirmou: a aplicação passou de 7.85 para 21.50 req/s (as 3 execuções ficaram entre 20.11 e 21.74, muito acima da faixa da 04, de 7.53 a 8.44), e o p95 de `pedidos-do-cliente` caiu de 12392.4 ms para 4492.0 ms. Abrir uma conexão por consulta era o maior desperdício da aplicação. O banco continua perto do limite de CPU (96.6%) e a API passou a usar mais CPU (29.6% de 1 CPU, com limite de 0,5 CPU), porque agora atende muito mais requisições.
+
+**Ponto de atenção:** a memória do banco subiu para 474.2 MiB de média, com pico de 493.0 MiB numa das execuções ([`recursos.txt`](resultados/20261111-211050-05-pool-de-conexoes/recursos.txt)), perto do limite de 512 MB. Uma causa provável, que não verifiquei, são os processos das 10 conexões que agora ficam abertas o tempo todo.
