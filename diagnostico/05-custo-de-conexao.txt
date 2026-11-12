@@ -1,0 +1,24 @@
+# Diagnóstico antes da mudança 05 (commit c48a182): custo de abrir uma conexão por consulta, sem carga.
+# Gerado em 2026-11-11 21:09:18 -0300, rodando dentro do container da API (mesmos limites de CPU), com o script abaixo:
+# docker compose exec -T -w /app api node - < script
+
+#   const { Client } = require('pg');
+#   const config = { host: process.env.DB_HOST, port: Number(process.env.DB_PORT), user: process.env.DB_USER, database: process.env.DB_NAME };
+#   const N = 300;
+#   (async () => {
+#     let t = process.hrtime.bigint();
+#     for (let i = 0; i < N; i++) { const c = new Client(config); await c.connect(); await c.query('SELECT 1'); await c.end(); }
+#     const novaCada = Number(process.hrtime.bigint() - t) / 1e6;
+#     const c = new Client(config); await c.connect();
+#     t = process.hrtime.bigint();
+#     for (let i = 0; i < N; i++) { await c.query('SELECT 1'); }
+#     const reaproveitada = Number(process.hrtime.bigint() - t) / 1e6;
+#     await c.end();
+#     console.log(`consultas: ${N} (SELECT 1, uma de cada vez)`);
+#     console.log(`conexao nova a cada consulta (como api/src/db.js faz hoje): total ${novaCada.toFixed(1)} ms, media ${(novaCada / N).toFixed(3)} ms por consulta`);
+#     console.log(`uma conexao reaproveitada:                               total ${reaproveitada.toFixed(1)} ms, media ${(reaproveitada / N).toFixed(3)} ms por consulta`);
+#   })();
+
+consultas: 300 (SELECT 1, uma de cada vez)
+conexao nova a cada consulta (como api/src/db.js faz hoje): total 1821.9 ms, media 6.073 ms por consulta
+uma conexao reaproveitada:                               total 33.7 ms, media 0.112 ms por consulta
