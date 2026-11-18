@@ -4,6 +4,29 @@ Aplicação do desafio técnico da vaga de estágio em Pesquisa e Inovação da 
 
 A aplicação é a API de uma loja fictícia, em Node.js (Express) com PostgreSQL 16, rodando em containers. Ela funciona, mas fica lenta sob carga e gasta mais recursos do que deveria. Todos os dados são sintéticos e gerados na primeira subida: 100 mil clientes, 20 mil produtos, 500 mil pedidos e 1,5 milhão de itens de pedido.
 
+## Resultado deste trabalho
+
+**O problema:** sob carga, o banco ficava no limite de 1 CPU o tempo todo, enquanto a API esperava. O diagnóstico ([`diagnostico/`](diagnostico/)) achou quatro causas: consultas que liam tabelas inteiras por falta de índice, uma conexão nova com o banco a cada consulta, o padrão N+1 na rota de pedidos do cliente e agregações recalculadas a cada chamada.
+
+**O que mudou:** sete mudanças, cada uma num commit e medida três vezes. Os limites de CPU e memória ficaram iguais, e o contrato foi mantido em todas.
+
+| Medição | Req/s | p95 geral | CPU banco / API | Memória banco / API | Pastas |
+|---|---|---|---|---|---|
+| Controle: aplicação original, banco recriado | 2.69 | 26751.0 ms | 99.0% / 7.9% | 382.5 MiB / 30.3 MiB | [`resultados/*-00-linha-de-base-banco-recriado`](resultados/20261111-202351-00-linha-de-base-banco-recriado/resumo.txt) |
+| Depois das 7 mudanças | 20.70 | 2404.6 ms | 96.1% / 30.4% | 468.8 MiB / 39.7 MiB | [`resultados/*-07-contagem-por-status`](resultados/20261111-213017-07-contagem-por-status/resumo.txt) |
+
+Os valores são a mediana de três execuções. O maior ganho isolado veio do pool de conexões (mudança 05). Três mudanças não deram ganho claro, e estão registradas com a explicação.
+
+| Arquivo | O que tem |
+|---|---|
+| [`artigo/artigo.md`](artigo/artigo.md) | O artigo: diagnóstico, estado da arte, alternativas, escolha e resultados |
+| [`experimentos.md`](experimentos.md) | Uma linha por mudança: fonte, status, antes, depois, pastas e conclusão, com os detalhes de cada uma |
+| [`proximos-testes.md`](proximos-testes.md) | Ideias pesquisadas e não testadas |
+| [`diagnostico/`](diagnostico/) | Saídas de `EXPLAIN ANALYZE` e outras medições usadas no diagnóstico |
+| [`banco/03-` a `07-`](banco/) | Índices e visões materializadas criados nas mudanças |
+
+Para repetir tudo, siga as seções abaixo: suba a aplicação, confira o contrato com `scripts/verificar-contrato.sh comparar` e meça com `scripts/medir.sh <rotulo>`. Para medir uma mudança específica, faça `git checkout` no commit dela (listado no `experimentos.md`) e recrie o banco com `docker compose down -v && docker compose up -d --build`.
+
 ## Prazo e entrega
 
 - **Prazo e entregas:** estão no enunciado enviado na largada
